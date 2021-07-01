@@ -2,6 +2,7 @@
 import tensorflow as tf
 from tensorflow import nn, einsum
 from tensorflow.keras.layers import Dense, Dropout, Input, LayerNormalization
+from tensorflow.keras.layers import TimeDistributed
 # import torch.nn.functional as F
 from einops import rearrange, repeat
 from einops.layers.tensorflow import Rearrange
@@ -28,18 +29,23 @@ class Transformer(tf.keras.layers.Layer):
 
   
 class ViViT(tf.keras.Model):
-    def __init__(self, image_size, patch_size, num_classes, num_frames, dim = 192, depth = 4, heads = 3, pool = 'cls', in_channels = 3, dim_head = 64, dropout = 0.,
-                 emb_dropout = 0., scale_dim = 4, ):
+    def __init__(self, image_size, patch_size, num_classes, num_frames, 
+        batch_size=32, dim = 192, depth = 4, heads = 3, pool = 'cls', 
+        in_channels = 3, dim_head = 64, dropout = 0.,
+        emb_dropout = 0., scale_dim = 4, ):
         super(ViViT, self).__init__()
         
-        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
+        assert pool in {'cls', 'mean', 'time'}, \
+        'pool type must be either cls (cls token), mean (mean pooling), \
+            or time (time distributed)'
 
 
         assert image_size % patch_size == 0, 'Image dimensions must be divisible by the patch size.'
         num_patches = (image_size // patch_size) ** 2
         patch_dim = in_channels * patch_size ** 2
         self.to_patch_embedding = tf.keras.Sequential([
-            Input(shape=(num_frames, in_channels, image_size, image_size)),
+            Input(shape=(num_frames, in_channels, image_size, image_size,), 
+                batch_size=batch_size),
             Rearrange('b t c (h p1) (w p2) -> b t (h w) (p1 p2 c)', p1 = patch_size, p2 = patch_size),
             Dense(dim),
         ])
@@ -59,9 +65,8 @@ class ViViT(tf.keras.Model):
             Dense(num_classes)
         ])
 
-    def call(self, x):
-        x = self.to_patch_embedding(x)
-        print("x shape:", x.shape)
+    def call(self, inputs):
+        x = self.to_patch_embedding(inputs)
         b, t, n, _ = x.shape
 
         cls_space_tokens = repeat(self.space_token, '() n d -> b t n d', b = b, t=t)
@@ -79,22 +84,41 @@ class ViViT(tf.keras.Model):
 
         x = self.temporal_transformer(x)
         
-
-        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
-
-        return self.mlp_head(x)
+        # if mean, average across time points
+        if self.pool == 'mean':
+            x = tf.math.reduce_mean(x, axis=1) 
+            x = self.mlp_head(x)
+        # elif classification, use the first (classification) token
+        elif self.pool == 'cls': 
+            x = x[:, 0]
+            x = self.mlp_head(x)
+        # elif time, use TimeDistributed layer to apply MLP to each time step
+        elif self.pool == 'time':
+            # skip the first (classification) token
+            x = TimeDistributed(self.mlp_head)(x[:, 1:, :])
+        return x
     
-    
-    
-# %%
 if __name__ == "__main__":
     
-    X = np.ones(shape=(1, 10, 6, 36, 36), dtype=np.float64)
-    y = np.ones(shape=(1, 10, 2), dtype=np.float64)
+    num_samples = 10000
+    batch_size = 32
+    X_pos = np.random.normal(loc=1., scale=1., 
+    size=(int(num_samples/2), 10, 6, 36, 36))
+    y_pos = np.ones(shape=(int(num_samples/2), 10, 2), dtype=np.float)
+
+    X_neg = np.random.normal(loc=0., scale=1., 
+    size=(int(num_samples/2), 10, 6, 36, 36))
+    y_neg = np.zeros(shape=(int(num_samples/2), 10, 2), dtype=np.float)
     
-    model = ViViT(image_size=36, patch_size=12, in_channels=6, num_classes=2, num_frames=10, dim=13)
-    tf.keras.utils.plot_model(model, show_shapes=False,)
+    X = np.concatenate((X_pos, X_neg), axis=0)
+    y = np.concatenate((y_pos, y_neg), axis=0)
+
+    print(X.shape, y.shape)
+
+    model = ViViT(image_size=36, patch_size=12, in_channels=6, 
+    num_classes=2, num_frames=10, dim=128, pool='time')
     model.compile(optimizer=tf.keras.optimizers.Adam(), loss="mse")
-    model.build(input_shape=(1, 10, 6, 36, 36))
+    model.build(input_shape=(batch_size, *X.shape[1:]))
+    tf.keras.utils.plot_model(model, show_shapes=True, expand_nested=True)
     print(model.summary())
-    model = model.fit(X, y, batch_size=1)
+    model = model.fit(X, y, batch_size=batch_size)

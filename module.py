@@ -1,7 +1,7 @@
 import tensorflow as tf
 from tensorflow import nn, einsum
-from tensorflow.keras.layers import Dense, Dropout, ReLU
-# import torch.nn.functional as F
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow_addons.layers import GELU
 import numpy as np
 
 from einops import rearrange, repeat
@@ -27,7 +27,7 @@ class FeedForward(tf.keras.layers.Layer):
         super(FeedForward, self).__init__()
         self.net = tf.keras.Sequential([
             Dense(hidden_dim),
-            ReLU(),
+            GELU(),
             Dropout(dropout),
             Dense(dim),
             Dropout(dropout)
@@ -120,13 +120,13 @@ class LeFF(tf.keras.layers.Layer):
                                     Dense(scale_dim),
                                     Rearrange('b n c -> b c n'),
                                     nn.BatchNorm1d(scale_dim),
-                                    ReLU(),
+                                    GELU(),
                                     Rearrange('b c (h w) -> b c h w', h=14, w=14)
         ])
         
         self.depth_conv =  tf.keras.Sequential([nn.Conv2d(scale_dim, scale_dim, kernel_size=depth_kernel, padding=1, groups=scale_dim, bias=False),
                           nn.BatchNorm2d(scale_dim),
-                          ReLU(),
+                          GELU(),
                           Rearrange('b c h w -> b (h w) c', h=14, w=14)
         ])
         
@@ -134,7 +134,7 @@ class LeFF(tf.keras.layers.Layer):
                                     Dense(dim),
                                     Rearrange('b n c -> b c n'),
                                     nn.BatchNorm1d(dim),
-                                    ReLU(),
+                                    GELU(),
                                     Rearrange('b c n -> b n c')
         ])
         

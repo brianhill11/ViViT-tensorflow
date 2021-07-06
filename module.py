@@ -7,12 +7,14 @@ import numpy as np
 from einops import rearrange, repeat
 from einops.layers.tensorflow import Rearrange
 
+
 class Residual(tf.keras.layers.Layer):
     def __init__(self, fn):
         super(Residual, self).__init__()
         self.fn = fn
     def call(self, x, **kwargs):
         return self.fn(x, **kwargs) + x
+
 
 class PreNorm(tf.keras.layers.Layer):
     def __init__(self, dim, fn):
@@ -22,8 +24,9 @@ class PreNorm(tf.keras.layers.Layer):
     def call(self, x, **kwargs):
         return self.fn(self.norm(x), **kwargs)
 
+
 class FeedForward(tf.keras.layers.Layer):
-    def __init__(self, dim, hidden_dim, dropout = 0.):
+    def __init__(self, dim, hidden_dim, dropout=0.):
         super(FeedForward, self).__init__()
         self.net = tf.keras.Sequential([
             Dense(hidden_dim),
@@ -36,7 +39,7 @@ class FeedForward(tf.keras.layers.Layer):
         return self.net(x)
 
 class Attention(tf.keras.layers.Layer):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
         super(Attention, self).__init__()
         inner_dim = dim_head *  heads
         project_out = not (heads == 1 and dim_head == dim)
@@ -67,7 +70,7 @@ class Attention(tf.keras.layers.Layer):
 
 
 class ReAttention(tf.keras.layers.Layer):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
         super(ReAttention, self).__init__()
         inner_dim = dim_head *  heads
         self.heads = heads
@@ -112,7 +115,7 @@ class ReAttention(tf.keras.layers.Layer):
     
 class LeFF(tf.keras.layers.Layer):
     
-    def __init__(self, dim = 192, scale = 4, depth_kernel = 3):
+    def __init__(self, dim=192, scale=4, depth_kernel=3):
         super(LeFF, self).__init__()
         
         scale_dim = dim*scale
@@ -121,13 +124,13 @@ class LeFF(tf.keras.layers.Layer):
                                     Rearrange('b n c -> b c n'),
                                     nn.BatchNorm1d(scale_dim),
                                     GELU(),
-                                    Rearrange('b c (h w) -> b c h w', h=14, w=14)
+                                    Rearrange('b (h w) c -> b h w c', h=14, w=14)
         ])
         
         self.depth_conv =  tf.keras.Sequential([nn.Conv2d(scale_dim, scale_dim, kernel_size=depth_kernel, padding=1, groups=scale_dim, bias=False),
                           nn.BatchNorm2d(scale_dim),
                           GELU(),
-                          Rearrange('b c h w -> b (h w) c', h=14, w=14)
+                          Rearrange('b h w c -> b (h w) c', h=14, w=14)
         ])
         
         self.down_proj = tf.keras.Sequential([
@@ -146,7 +149,7 @@ class LeFF(tf.keras.layers.Layer):
     
     
 class LCAttention(tf.keras.layers.Layer):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
         super(LCAttention, self).__init__()
         inner_dim = dim_head *  heads
         project_out = not (heads == 1 and dim_head == dim)

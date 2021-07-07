@@ -2,7 +2,7 @@
 import tensorflow as tf
 from tensorflow import nn, einsum
 from tensorflow.keras.layers import Dense, Dropout, Input, LayerNormalization
-from tensorflow.keras.layers import TimeDistributed, Reshape
+from tensorflow.keras.layers import TimeDistributed, Reshape, Lambda
 from einops import rearrange, repeat
 from einops.layers.tensorflow import Rearrange
 from module import Attention, PreNorm, FeedForward
@@ -31,9 +31,11 @@ class ViViT(tf.keras.Model):
     def __init__(self, image_size, patch_size, num_classes, num_frames, 
         batch_size=32, dim=192, depth=4, heads=3, pool='cls', 
         in_channels=3, dim_head=64, dropout=0.,
-        emb_dropout=0., scale_dim=4, ):
+        emb_dropout=0., scale_dim=4, output_names=None):
         super(ViViT, self).__init__()
         
+        # name of final layer output 
+        self.output_names = output_names
         assert pool in {'cls', 'mean', 'time'}, \
         'pool type must be either cls (cls token), mean (mean pooling), \
             or time (time distributed)'
@@ -94,6 +96,10 @@ class ViViT(tf.keras.Model):
         elif self.pool == 'time':
             # skip the first (classification) token
             x = TimeDistributed(self.mlp_head)(x[:, 1:, :])
+        if self.output_names:
+            # name each output layer 
+            output = [Lambda(lambda a: a[:, 1:, i], name=name)(x) for i, name in enumerate(self.output_names)]
+            x = output
         return x
 
 if __name__ == "__main__":
@@ -105,11 +111,11 @@ if __name__ == "__main__":
     image_size = 36
     in_channels = 3
     X_pos = np.random.normal(loc=1., scale=1., 
-    size=(int(num_samples/2), num_frames, image_size, image_size, in_channels))
+    size=(int(num_samples/2), num_frames+1, image_size, image_size, in_channels))
     y_pos = np.ones(shape=(int(num_samples/2), num_frames, 2), dtype=np.float)
 
     X_neg = np.random.normal(loc=0., scale=1., 
-    size=(int(num_samples/2), num_frames, image_size, image_size, in_channels))
+    size=(int(num_samples/2), num_frames+1, image_size, image_size, in_channels))
     y_neg = np.zeros(shape=(int(num_samples/2), num_frames, 2), dtype=np.float)
     
     X = np.concatenate((X_pos, X_neg), axis=0)
@@ -117,10 +123,14 @@ if __name__ == "__main__":
 
     print(X.shape, y.shape)
 
-    model = ViViT(image_size=image_size, patch_size=12, in_channels=in_channels, 
-    num_classes=2, num_frames=num_frames, dim=16, pool='time', batch_size=batch_size)
+    y = {"dysub": y[:, :, 0], "drsub": y[:, :, 1]}
+
+    model = ViViT(image_size=image_size, patch_size=image_size, in_channels=in_channels, 
+    num_classes=2, num_frames=num_frames+1, dim=16, pool='time', batch_size=batch_size, output_names=["dysub", "drsub"])
     model.compile(optimizer=tf.keras.optimizers.Adam(), loss="mse")
-    model.build(input_shape=(batch_size, *X.shape[1:]))
-    tf.keras.utils.plot_model(model, show_shapes=True, expand_nested=True)
+    model.build(input_shape=(batch_size, num_frames+1, *X.shape[2:]))
+    # tf.keras.utils.plot_model(model, show_shapes=True, expand_nested=True)
     print(model.summary())
     history = model.fit(X, y, batch_size=batch_size)
+
+# %%

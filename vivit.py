@@ -5,8 +5,8 @@ import tensorflow as tf
 from tensorflow.python.keras.engine.training import Model
 from tensorflow_addons.layers import GELU
 from tensorflow import nn, einsum
-from tensorflow.keras.layers import Dense, Dropout, Input, LayerNormalization
-from tensorflow.keras.layers import TimeDistributed, Lambda
+from tensorflow.keras.layers import Dense, Dropout, Input, LayerNormalization, add
+from tensorflow.keras.layers import TimeDistributed, Lambda, GRU, Bidirectional
 from einops import rearrange, repeat
 from einops.layers.tensorflow import Rearrange
 
@@ -28,7 +28,7 @@ def Attention(input_layer, dim, heads=8, dim_head=64, dropout=0.):
     project_out = not (heads == 1 and dim_head == dim)
     scale = dim_head ** -0.5
 
-    to_qkv = Dense(inner_dim * 3, use_bias = False)(input_layer)
+    to_qkv = Dense(inner_dim * 3, use_bias=False)(input_layer)
     qkv = tf.split(to_qkv, num_or_size_splits=3, axis=-1)
     q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), qkv)
 
@@ -49,9 +49,11 @@ def TransformerBlock(input_layer, dim, mlp_dim, heads=8, dim_head=64, dropout=0.
     output_layer = PreNorm(input_layer)
     output_layer = Attention(output_layer, dim, heads=heads, dim_head=dim_head, 
         dropout=dropout)
+    output_layer = add([input_layer, output_layer])
     output_layer = PreNorm(output_layer)
     output_layer = FeedForward(output_layer, dim, hidden_dim=mlp_dim, 
         dropout=dropout)
+    output_layer = add([input_layer, output_layer])
     return output_layer
 
 def Transformer(batch_size, num_patches, dim, depth, heads, dim_head, mlp_dim, 
@@ -61,7 +63,7 @@ def Transformer(batch_size, num_patches, dim, depth, heads, dim_head, mlp_dim,
     for _ in range(depth):
         output_layer = TransformerBlock(output_layer, dim, mlp_dim, heads, 
             dim_head, dropout=dropout)
-    output_layer = LayerNormalization()(output_layer)
+    # output_layer = LayerNormalization()(output_layer)
     model = Model(input_layer, output_layer, name=name)
     return model
 
@@ -162,36 +164,36 @@ def ViViT(image_size, patch_size, num_classes, num_frames,
     return model
 
 
+if __name__ == "__main__":
+    # simulate example data
+    num_samples = 800
+    batch_size = 8
+    num_frames = 30
+    image_size = 36
+    in_channels = 3
+    X_pos = np.random.normal(loc=1., scale=1., 
+    size=(int(num_samples/2), num_frames+1, image_size, image_size, in_channels))
+    y_pos = np.ones(shape=(int(num_samples/2), num_frames, 2), dtype=np.float)
 
-# simulate example data
-num_samples = 800
-batch_size = 8
-num_frames = 30
-image_size = 36
-in_channels = 3
-X_pos = np.random.normal(loc=1., scale=1., 
-size=(int(num_samples/2), num_frames+1, image_size, image_size, in_channels))
-y_pos = np.ones(shape=(int(num_samples/2), num_frames, 2), dtype=np.float)
+    X_neg = np.random.normal(loc=0., scale=1., 
+    size=(int(num_samples/2), num_frames+1, image_size, image_size, in_channels))
+    y_neg = np.zeros(shape=(int(num_samples/2), num_frames, 2), dtype=np.float)
 
-X_neg = np.random.normal(loc=0., scale=1., 
-size=(int(num_samples/2), num_frames+1, image_size, image_size, in_channels))
-y_neg = np.zeros(shape=(int(num_samples/2), num_frames, 2), dtype=np.float)
+    X = np.concatenate((X_pos, X_neg), axis=0)
+    y = np.concatenate((y_pos, y_neg), axis=0)
 
-X = np.concatenate((X_pos, X_neg), axis=0)
-y = np.concatenate((y_pos, y_neg), axis=0)
+    print(X.shape, y.shape)
 
-print(X.shape, y.shape)
+    y = {"dysub": y[:, :, 0], "drsub": y[:, :, 1]}
 
-y = {"dysub": y[:, :, 0], "drsub": y[:, :, 1]}
-
-model = ViViT(image_size=image_size, patch_size=image_size, in_channels=in_channels, 
-num_classes=2, num_frames=num_frames+1, dim=16, pool='time', depth=1,
-batch_size=batch_size, output_names=["dysub", "drsub"], 
-use_classification_token=True, use_temporal_token=True,)
-model.compile(optimizer=tf.keras.optimizers.Adam(), loss="mse")
-tf.keras.utils.plot_model(model, show_shapes=True, expand_nested=False)
-print(model.summary())
-os.makedirs("checkpoints", exist_ok=True)
-save_best_callback = tf.keras.callbacks.ModelCheckpoint(filepath=os.path.join("checkpoints", "checkpoint_epoch{epoch:02d}_model.hdf5"),
-                                                            save_best_only=False, verbose=1)
-history = model.fit(X, y, batch_size=batch_size, callbacks=[save_best_callback])
+    model = ViViT(image_size=image_size, patch_size=12, in_channels=in_channels, 
+    num_classes=2, num_frames=num_frames+1, dim=16, pool='time', depth=1,
+    batch_size=batch_size, output_names=["dysub", "drsub"], 
+    use_classification_token=True, use_temporal_token=True,)
+    model.compile(optimizer=tf.keras.optimizers.Adam(), loss="mse")
+    tf.keras.utils.plot_model(model, show_shapes=True, expand_nested=True)
+    print(model.summary())
+    os.makedirs("checkpoints", exist_ok=True)
+    save_best_callback = tf.keras.callbacks.ModelCheckpoint(filepath=os.path.join("checkpoints", "checkpoint_epoch{epoch:02d}_model.hdf5"),
+                                                                save_best_only=False, verbose=1)
+    history = model.fit(X, y, batch_size=batch_size, callbacks=[save_best_callback])

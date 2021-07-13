@@ -7,7 +7,7 @@ from tensorflow_addons.layers import GELU
 from tensorflow import nn, einsum
 from tensorflow.keras.layers import Dense, Dropout, Input, LayerNormalization, add
 from tensorflow.keras.layers import TimeDistributed, Lambda, GRU, Bidirectional
-from einops import rearrange, repeat
+from einops import repeat
 from einops.layers.tensorflow import Rearrange
 
 
@@ -30,14 +30,14 @@ def Attention(input_layer, dim, heads=8, dim_head=64, dropout=0.):
 
     to_qkv = Dense(inner_dim * 3, use_bias=False)(input_layer)
     qkv = tf.split(to_qkv, num_or_size_splits=3, axis=-1)
-    q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), qkv)
+    q, k, v = map(lambda t: Rearrange('b n (h d) -> b h n d', h = h)(t), qkv)
 
     dots = einsum('b h i d, b h j d -> b h i j', q, k) * scale
 
     attn = tf.nn.softmax(dots, axis=-1)
 
     out = einsum('b h i j, b h j d -> b h i d', attn, v)
-    out = rearrange(out, 'b h n d -> b n (h d)')
+    out = Rearrange('b h n d -> b n (h d)')(out)
     if project_out:
         out = Dense(dim)(out)
         out = Dropout(dropout)(out)
@@ -113,12 +113,12 @@ def ViViT(image_size, patch_size, num_classes, num_frames,
     output += pos_embedding[:, :, :(n + 1)]
     output = Dropout(emb_dropout, name="Dropout")(output)
 
-    output = rearrange(output, 'b t n d -> (b t) n d')
+    output = Rearrange('b t n d -> (b t) n d')(output)
     # spatial transformer 
     output = Transformer(output.shape[0], output.shape[1], output.shape[2], 
         depth, heads, dim_head, mlp_dim, 
         dropout=dropout, name="SpatialTransformer")(output)
-    output = rearrange(output[:, 0], '(b t) ... -> b t ...', b=b)
+    output = Rearrange('(b t) ... -> b t ...', b=b)(output[:, 0])
 
     if use_temporal_token:
         temporal_token = tf.Variable(
@@ -187,11 +187,11 @@ if __name__ == "__main__":
     y = {"dysub": y[:, :, 0], "drsub": y[:, :, 1]}
 
     model = ViViT(image_size=image_size, patch_size=12, in_channels=in_channels, 
-    num_classes=2, num_frames=num_frames+1, dim=16, pool='time', depth=1,
+    num_classes=2, num_frames=num_frames+1, dim=16, pool='time', depth=2,
     batch_size=batch_size, output_names=["dysub", "drsub"], 
     use_classification_token=True, use_temporal_token=True,)
     model.compile(optimizer=tf.keras.optimizers.Adam(), loss="mse")
-    tf.keras.utils.plot_model(model, show_shapes=True, expand_nested=True)
+    # tf.keras.utils.plot_model(model, show_shapes=True, expand_nested=True)
     print(model.summary())
     os.makedirs("checkpoints", exist_ok=True)
     save_best_callback = tf.keras.callbacks.ModelCheckpoint(filepath=os.path.join("checkpoints", "checkpoint_epoch{epoch:02d}_model.hdf5"),

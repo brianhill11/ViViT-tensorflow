@@ -74,9 +74,9 @@ def ViViT(image_size, patch_size, num_classes, num_frames,
         use_classification_token=True, use_temporal_token=True, 
         output_names=None):
 
-    assert pool in {'cls', 'mean', 'time', 'none'}, \
+    assert pool in {'cls', 'mean', 'time', 'none', 'rnn'}, \
         'pool type must be either cls (cls token), mean (mean pooling), \
-            time (time distributed), or none (return embeddings)'
+            time (time distributed), rnn, or none (return embeddings)'
 
     assert image_size % patch_size == 0, 'Image dimensions must be divisible by the patch size.'
 
@@ -155,6 +155,19 @@ def ViViT(image_size, patch_size, num_classes, num_frames,
             # name each output layer 
             temp_output = [Lambda(lambda a: a[:, 1:, i], name=name)(output) for i, name in enumerate(output_names)]
             output = temp_output
+    # elif rnn, use RNN layer
+    elif pool == 'rnn':
+        # skip the first (classification) token
+        # TODO: - can this skipping be handled by argument? 
+        output = LayerNormalization()(output)
+        if output_names:
+            # name each output layer 
+            temp_output_list = []
+            for i, name in enumerate(output_names):
+                temp_output = Bidirectional(GRU(dim, dropout=dropout, return_sequences=True))(output[:, 2:, i:i+1])
+                temp_output = GRU(1, activation=None, return_sequences=True, name=name)(temp_output)
+                temp_output_list.append(temp_output)
+            output = temp_output_list
     # elif none, return token embeddings
     elif pool == 'none':
         # skip first (classification token)
@@ -187,7 +200,7 @@ if __name__ == "__main__":
     y = {"dysub": y[:, :, 0], "drsub": y[:, :, 1]}
 
     model = ViViT(image_size=image_size, patch_size=12, in_channels=in_channels, 
-    num_classes=2, num_frames=num_frames+1, dim=16, pool='time', depth=2,
+    num_classes=2, num_frames=num_frames+1, dim=16, pool='rnn', depth=2,
     batch_size=batch_size, output_names=["dysub", "drsub"], 
     use_classification_token=True, use_temporal_token=True,)
     model.compile(optimizer=tf.keras.optimizers.Adam(), loss="mse")

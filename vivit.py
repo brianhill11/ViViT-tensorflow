@@ -34,7 +34,7 @@ def Attention(input_layer, dim, heads=8, dim_head=64, dropout=0.):
 
     dots = einsum('b h i d, b h j d -> b h i j', q, k) * scale
 
-    attn = tf.nn.softmax(dots, axis=-1)
+    attn = tf.keras.layers.Softmax(axis=-1)(dots)
 
     out = einsum('b h i j, b h j d -> b h i d', attn, v)
     out = Rearrange('b h n d -> b n (h d)')(out)
@@ -164,7 +164,8 @@ def ViViT(image_size, patch_size, num_classes, num_frames,
             # name each output layer 
             temp_output_list = []
             for i, name in enumerate(output_names):
-                temp_output = Bidirectional(GRU(dim, dropout=dropout, return_sequences=True))(output[:, 2:, i:i+1])
+                temp_output = Lambda(lambda a: a[:, 2:, i:i+1])(output)
+                temp_output = Bidirectional(GRU(dim, dropout=dropout, return_sequences=True))(temp_output)
                 temp_output = GRU(1, activation=None, return_sequences=True, name=name)(temp_output)
                 temp_output_list.append(temp_output)
             output = temp_output_list
@@ -204,7 +205,8 @@ if __name__ == "__main__":
     batch_size=batch_size, output_names=["dysub", "drsub"], 
     use_classification_token=True, use_temporal_token=True,)
     model.compile(optimizer=tf.keras.optimizers.Adam(), loss="mse")
-    # tf.keras.utils.plot_model(model, show_shapes=True, expand_nested=True)
+    tf.keras.utils.plot_model(model, to_file="model.png", 
+        show_shapes=True, expand_nested=False)
     print(model.summary())
     os.makedirs("checkpoints", exist_ok=True)
     save_best_callback = tf.keras.callbacks.ModelCheckpoint(filepath=os.path.join("checkpoints", "checkpoint_epoch{epoch:02d}_model.hdf5"),
